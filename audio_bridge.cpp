@@ -3,6 +3,7 @@
 #include <vector>             // std::vector for audio buffer
 #include <string>             // std::string for device names
 #include <utility>            // std::swap
+#include "mcp3008.h"
 
 #define SAMPLE_RATE 48000     // audio sample rate in hz
 #define CHANNELS 2            // stereo
