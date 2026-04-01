@@ -2,6 +2,16 @@
 
 #include <iostream>
 
+void process_samples_inplace(
+    float* buffer,
+    snd_pcm_uframes_t frames,
+    unsigned channels
+) {
+    (void)buffer;
+    (void)frames;
+    (void)channels;
+}
+
 bool process_block(
     snd_pcm_t* capture_handle,
     snd_pcm_t* playback_handle,
@@ -21,6 +31,8 @@ bool process_block(
         snd_pcm_prepare(capture_handle);
         return false;
     }
+
+    process_samples_inplace(buffer, frames, 2U);
 
     // ---- write buffer to playback device ----
     err = snd_pcm_writei(playback_handle,

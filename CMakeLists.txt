@@ -53,3 +53,36 @@ target_link_libraries(audio_bridge PRIVATE
 )
 
 install(TARGETS audio_bridge RUNTIME DESTINATION bin)
+
+add_subdirectory(DeciBeliever EXCLUDE_FROM_ALL)
+
+enable_testing()
+
+add_executable(test_process_block
+    tests/test_process_block.cpp
+    src/process_audio.cpp
+)
+
+target_include_directories(test_process_block PRIVATE
+    ${ALSA_INCLUDE_DIRS}
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/DeciBeliever/include
+)
+
+target_compile_options(test_process_block PRIVATE
+    ${ALSA_CFLAGS_OTHER}
+    -Wall
+    -Wextra
+    -Wpedantic
+)
+
+target_link_directories(test_process_block PRIVATE
+    ${ALSA_LIBRARY_DIRS}
+)
+
+target_link_libraries(test_process_block PRIVATE
+    DeciBeliever_lib
+    ${ALSA_LIBRARIES}
+)
+
+add_test(NAME test_process_block COMMAND test_process_block)

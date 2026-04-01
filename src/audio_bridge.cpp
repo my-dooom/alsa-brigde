@@ -10,7 +10,11 @@
 #define CHANNELS 2            // stereo
 #define FRAMES 128            // number of frames per read/write block
 
-
+struct DeviceHandles
+{
+    snd_pcm_t* capture;
+    snd_pcm_t* playback;
+};
 
 int main()
 {
@@ -18,8 +22,7 @@ int main()
     std::string capture_device = "plughw:0,0";
     std::string playback_device = "plughw:1,0";
 
-    snd_pcm_t *capture_handle;     // handle for input device (focusrite)
-    snd_pcm_t *playback_handle;    // handle for output device (iqaudio)
+    DeviceHandles handles; 
     snd_pcm_hw_params_t *hw_params;// structure for hardware parameters
 
     int err; // used to store alsa return codes
@@ -30,14 +33,14 @@ int main()
     // ---- open capture device (focusrite) ----
     bool swapped = false;
     std::string original_capture = capture_device;
-    if ((err = snd_pcm_open(&capture_handle, capture_device.c_str(),
+    if ((err = snd_pcm_open(&handles.capture, capture_device.c_str(),
                             SND_PCM_STREAM_CAPTURE, 0)) < 0)
     {
         // try swapping devices
         std::swap(capture_device, playback_device);
         swapped = true;
         std::cerr << "Failed to open capture on '" << original_capture << "', trying swapped devices...\n";
-        if ((err = snd_pcm_open(&capture_handle, capture_device.c_str(),
+        if ((err = snd_pcm_open(&handles.capture, capture_device.c_str(),
                                 SND_PCM_STREAM_CAPTURE, 0)) < 0)
         {
             std::cerr << "cannot open capture device '" << capture_device << "' even after swap: "
@@ -47,7 +50,7 @@ int main()
     }
 
     // ---- open playback device (iqaudio dac+) ----
-    if ((err = snd_pcm_open(&playback_handle, playback_device.c_str(),
+    if ((err = snd_pcm_open(&handles.playback, playback_device.c_str(),
                             SND_PCM_STREAM_PLAYBACK, 0)) < 0)
     {
         std::cerr << "cannot open playback device '" << playback_device << "': "
@@ -81,11 +84,11 @@ int main()
         snd_pcm_hw_params(handle, hw_params);                  // apply parameters to device
     };
 
-    configure_device(capture_handle);   // configure input
-    configure_device(playback_handle);  // configure output
+    configure_device(handles.capture);   // configure input
+    configure_device(handles.playback);  // configure output
 
-    snd_pcm_prepare(capture_handle);    // prepare capture device for use
-    snd_pcm_prepare(playback_handle);   // prepare playback device for use
+    snd_pcm_prepare(handles.capture);    // prepare capture device for use
+    snd_pcm_prepare(handles.playback);   // prepare playback device for use
 
     /* Use a buffer large enough to hold one period */
     snd_pcm_hw_params_get_period_size(hw_params, &frames,
@@ -98,8 +101,8 @@ int main()
     while (true) // main processing loop
     {
         if (!process_block(
-                capture_handle,
-                playback_handle,
+                handles.capture,
+                handles.playback,
                 buffer.data(),
                 frames,
                 loop_count))
@@ -108,8 +111,8 @@ int main()
         }
     }
 
-    snd_pcm_close(capture_handle);  // close input device
-    snd_pcm_close(playback_handle); // close output device
+    snd_pcm_close(handles.capture);  // close input device
+    snd_pcm_close(handles.playback); // close output device
 
     return 0; // exit program
 }
