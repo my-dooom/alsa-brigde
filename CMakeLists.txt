@@ -26,13 +26,15 @@ if(NOT ALSA_FOUND)
 endif()
 
 add_executable(audio_bridge
-    audio_bridge.cpp
-    mcp3008.c
+    src/audio_bridge.cpp
+    src/mcp3008.c
+    src/process_audio.cpp
 )
 
 target_include_directories(audio_bridge PRIVATE
     ${ALSA_INCLUDE_DIRS}
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/include
 )
 
 target_compile_options(audio_bridge PRIVATE
