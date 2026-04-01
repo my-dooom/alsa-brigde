@@ -4,6 +4,8 @@
 #include <string>             // std::string for device names
 #include <utility>            // std::swap
 
+#include "process_audio.hpp"
+
 #define SAMPLE_RATE 48000     // audio sample rate in hz
 #define CHANNELS 2            // stereo
 #define FRAMES 128            // number of frames per read/write block
@@ -95,31 +97,14 @@ int main()
     int loop_count = 0;
     while (true) // main processing loop
     {
-        // ---- read audio from capture device into buffer ----
-        err = snd_pcm_readi(capture_handle,
-                            &buffer[0], frames);
-        if (err < 0)
+        if (!process_block(
+                capture_handle,
+                playback_handle,
+                buffer.data(),
+                frames,
+                loop_count))
         {
-            // recover from xruns or other read errors
-            std::cerr << "read error: " << snd_strerror(err) << ", preparing...\n";
-            snd_pcm_prepare(capture_handle);
             continue; // skip this cycle
-        }
-
-        // ---- write buffer to playback device ----
-        err = snd_pcm_writei(playback_handle,
-                             &buffer[0], frames);
-        if (err < 0)
-        {
-            // recover from xruns or write errors
-            std::cerr << "write error: " << snd_strerror(err) << ", preparing...\n";
-            snd_pcm_prepare(playback_handle);
-            continue; // skip this cycle
-        }
-
-        loop_count++;
-        if (loop_count % 1000 == 0) {
-            std::cout << "Processed " << loop_count << " blocks\n";
         }
     }
 
