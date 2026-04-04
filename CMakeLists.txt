@@ -63,7 +63,18 @@ add_executable(test_process_block
     src/process_audio.cpp
 )
 
+add_executable(test_e2e
+    tests/test_e2e.cc
+    src/process_audio.cpp
+)
+
 target_include_directories(test_process_block PRIVATE
+    ${ALSA_INCLUDE_DIRS}
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/DeciBeliever/include
+)
+
+target_include_directories(test_e2e PRIVATE
     ${ALSA_INCLUDE_DIRS}
     ${CMAKE_CURRENT_SOURCE_DIR}/src/include
     ${CMAKE_CURRENT_SOURCE_DIR}/DeciBeliever/include
@@ -76,7 +87,18 @@ target_compile_options(test_process_block PRIVATE
     -Wpedantic
 )
 
+target_compile_options(test_e2e PRIVATE
+    ${ALSA_CFLAGS_OTHER}
+    -Wall
+    -Wextra
+    -Wpedantic
+)
+
 target_link_directories(test_process_block PRIVATE
+    ${ALSA_LIBRARY_DIRS}
+)
+
+target_link_directories(test_e2e PRIVATE
     ${ALSA_LIBRARY_DIRS}
 )
 
@@ -85,4 +107,10 @@ target_link_libraries(test_process_block PRIVATE
     ${ALSA_LIBRARIES}
 )
 
+target_link_libraries(test_e2e PRIVATE
+    DeciBeliever_lib
+    ${ALSA_LIBRARIES}
+)
+
 add_test(NAME test_process_block COMMAND test_process_block)
+add_test(NAME test_e2e COMMAND test_e2e)
