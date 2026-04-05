@@ -212,19 +212,53 @@ static bool process_block_mmap(
     }
 
 
-    // Periodic signal meter for S32 path to verify non-silent input.
-    if (loop_count % 200 == 0) {
+    // Periodic loudness meter (RMS in dBFS) for S32 interleaved stereo.
+    if (loop_count % 5 == 0) {
         if (g_stream_format == SND_PCM_FORMAT_S32_LE) {
             const auto* s = reinterpret_cast<const int32_t*>(cap_ptr);
-            const size_t sample_count = static_cast<size_t>(n) * 2U;
-            int32_t peak = 0;
-            // Compute absolute peak over this block.
-            for (size_t i = 0; i < sample_count; ++i) {
-                int32_t v = s[i];
-                if (v < 0) v = -v;
-                if (v > peak) peak = v;
+            const size_t frame_count = static_cast<size_t>(n);
+            double sum_sq_l = 0.0;
+            double sum_sq_r = 0.0;
+
+            // Compute per-channel RMS over the current block.
+            for (size_t i = 0; i < frame_count; ++i) {
+                const double l = static_cast<double>(s[i * 2]) / 2147483648.0;
+                const double r = static_cast<double>(s[i * 2 + 1]) / 2147483648.0;
+                sum_sq_l += l * l;
+                sum_sq_r += r * r;
             }
-            std::cout << "S32 peak=" << peak << "\n";
+
+            const double rms_l = std::sqrt(sum_sq_l / static_cast<double>(frame_count));
+            const double rms_r = std::sqrt(sum_sq_r / static_cast<double>(frame_count));
+
+            const double floor = 1e-9;
+            double db_l = 20.0 * std::log10(rms_l > floor ? rms_l : floor);
+            double db_r = 20.0 * std::log10(rms_r > floor ? rms_r : floor);
+
+            if (db_l < -60.0) db_l = -60.0;
+            if (db_r < -60.0) db_r = -60.0;
+            if (db_l > 0.0) db_l = 0.0;
+            if (db_r > 0.0) db_r = 0.0;
+
+            static bool meter_initialized = false;
+            constexpr int meter_width = 30;
+            const int bars_l = static_cast<int>(((db_l + 60.0) / 60.0) * meter_width);
+            const int bars_r = static_cast<int>(((db_r + 60.0) / 60.0) * meter_width);
+
+            if (meter_initialized) {
+                // Move from second line back to first line before redrawing both.
+                std::cout << "\r\033[1A";
+            } else {
+                meter_initialized = true;
+            }
+
+            std::cout << "\033[2KR [";
+            for (int i = 0; i < meter_width; ++i) std::cout << (i < bars_r ? '#' : ' ');
+            std::cout << "] " << db_r << " dBFS\n";
+
+            std::cout << "\033[2KL [";
+            for (int i = 0; i < meter_width; ++i) std::cout << (i < bars_l ? '#' : ' ');
+            std::cout << "] " << db_l << " dBFS" << std::flush;
         }
     }
 
@@ -265,9 +299,6 @@ static bool process_block_mmap(
 
     // Progress heartbeat.
     loop_count++;
-    if (loop_count % 1000 == 0) {
-        std::cout << "Processed " << loop_count << " blocks\n";
-    }
 
     return true;
 }
