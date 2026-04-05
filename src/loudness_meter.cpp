@@ -1,0 +1,57 @@
+#include "loudness_meter.hpp"
+
+#include <cmath>
+#include <iostream>
+
+void LoudnessMeter::render_if_due(int loop_count, const int32_t* interleaved_stereo, size_t frame_count) {
+    // Throttle meter updates and guard against invalid input.
+    if (loop_count % 5 != 0 || interleaved_stereo == nullptr || frame_count == 0) {
+        return;
+    }
+
+    double sum_sq_l = 0.0;
+    double sum_sq_r = 0.0;
+
+    // Compute per-channel RMS energy from interleaved S32 stereo frames.
+    for (size_t i = 0; i < frame_count; ++i) {
+        const double l = static_cast<double>(interleaved_stereo[i * 2]) / 2147483648.0;
+        const double r = static_cast<double>(interleaved_stereo[i * 2 + 1]) / 2147483648.0;
+        sum_sq_l += l * l;
+        sum_sq_r += r * r;
+    }
+
+    // Convert RMS to dBFS.
+    const double rms_l = std::sqrt(sum_sq_l / static_cast<double>(frame_count));
+    const double rms_r = std::sqrt(sum_sq_r / static_cast<double>(frame_count));
+
+    const double floor = 1e-9;
+    double db_l = 20.0 * std::log10(rms_l > floor ? rms_l : floor);
+    double db_r = 20.0 * std::log10(rms_r > floor ? rms_r : floor);
+
+    // Clamp display range so bar scaling remains stable.
+    if (db_l < -60.0) db_l = -60.0;
+    if (db_r < -60.0) db_r = -60.0;
+    if (db_l > 0.0) db_l = 0.0;
+    if (db_r > 0.0) db_r = 0.0;
+
+    // Translate dB range [-60, 0] into bar lengths.
+    constexpr int meter_width = 30;
+    const int bars_l = static_cast<int>(((db_l + 60.0) / 60.0) * meter_width);
+    const int bars_r = static_cast<int>(((db_r + 60.0) / 60.0) * meter_width);
+
+    // Redraw in-place on two lines (R on top, L on bottom).
+    if (initialized_) {
+        std::cout << "\r\033[1A";
+    } else {
+        initialized_ = true;
+    }
+
+    // Clear line before drawing to avoid stale characters from longer previous output.
+    std::cout << "\033[2KR [";
+    for (int i = 0; i < meter_width; ++i) std::cout << (i < bars_r ? '#' : ' ');
+    std::cout << "] " << db_r << " dBFS\n";
+
+    std::cout << "\033[2KL [";
+    for (int i = 0; i < meter_width; ++i) std::cout << (i < bars_l ? '#' : ' ');
+    std::cout << "] " << db_l << " dBFS" << std::flush;
+}

@@ -29,6 +29,9 @@ add_executable(audio_bridge
     src/audio_bridge.cpp
     src/mcp3008.c
     src/process_audio.cpp
+    src/process_block_mmap.cpp
+    src/loudness_meter.cpp
+    src/stream_format.cpp
 )
 
 target_include_directories(audio_bridge PRIVATE
@@ -61,11 +64,17 @@ enable_testing()
 add_executable(test_process_block
     tests/test_process_block.cpp
     src/process_audio.cpp
+    src/process_block_mmap.cpp
+    src/loudness_meter.cpp
+    src/stream_format.cpp
 )
 
 add_executable(test_e2e
     tests/test_e2e.cc
     src/process_audio.cpp
+    src/process_block_mmap.cpp
+    src/loudness_meter.cpp
+    src/stream_format.cpp
 )
 
 target_include_directories(test_process_block PRIVATE
