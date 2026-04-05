@@ -27,6 +27,8 @@ endif()
 
 add_executable(audio_bridge
     src/audio_bridge.cpp
+    src/audio_config.cpp
+    src/device_setup.cpp
     src/mcp3008.c
     src/process_audio.cpp
     src/process_block_mmap.cpp
