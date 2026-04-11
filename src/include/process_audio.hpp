@@ -3,6 +3,15 @@
 #include <alsa/asoundlib.h>
 #include <cstdint>
 
+struct EffectParams {
+	float output_gain;
+	float wet_mix;
+};
+
+void set_effect_target_params(const EffectParams& params);
+EffectParams get_effect_target_params();
+EffectParams get_effect_smoothed_params();
+
 void process_samples_inplace(
 	int32_t* buffer,
 	snd_pcm_uframes_t frames,

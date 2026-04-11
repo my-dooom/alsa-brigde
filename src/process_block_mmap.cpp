@@ -52,7 +52,9 @@ bool process_block_mmap_impl(
     // Persist runtime state between calls while the stream loop is active.
     static bool playback_started = false;
     static int wait_timeouts = 0;
+#ifdef NDEBUG
     static LoudnessMeter meter;
+#endif
     int err;
 
     // If playback is already running (e.g. externally started), sync internal state.
@@ -182,7 +184,9 @@ bool process_block_mmap_impl(
     // Apply optional sample processing and update live meter for S32 stream format.
     if (get_stream_format() == SND_PCM_FORMAT_S32_LE) {
         process_samples_inplace(reinterpret_cast<int32_t*>(play_ptr), n, 2U);
+#ifdef NDEBUG
         meter.render_if_due(loop_count, reinterpret_cast<const int32_t*>(cap_ptr), static_cast<size_t>(n));
+#endif
     }
 
     // Commit capture and playback windows; failure means stream recovery is needed.

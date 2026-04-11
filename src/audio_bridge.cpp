@@ -1,9 +1,13 @@
 #include <alsa/asoundlib.h> // alsa api for pcm audio capture/playback
+#include <cstdlib>          // getenv, strtoul
 #include <iostream>         // std::cout / std::cerr
+#include <linux/spi/spidev.h>
 #include <string>           // std::string for device names
+#include <unistd.h>         // close
 
 #include "audio_config.hpp"
 #include "device_setup.hpp"
+#include "mcp3008.h"
 #include "process_audio.hpp"
 
 #ifndef NDEBUG
@@ -23,6 +27,11 @@
 #define CHANNELS 2        // stereo
 #define PERIOD_FRAMES 512 // target period size in frames
 #define BUFFER_PERIODS 4  // total ring buffer = PERIOD_FRAMES * BUFFER_PERIODS
+
+#define SPI_DEVICE "/dev/spidev0.0"
+#define SPI_CHANNEL_1 0
+#define SPI_CHANNEL_2 1
+#define PARAM_UPDATE_EVERY_LOOPS 4
 
 int main()
 {
@@ -55,6 +64,41 @@ int main()
 
     AV_DEBUG_LOG(std::cout << "Selected DMA format: " << snd_pcm_format_name(stream_format) << "\n";);
     set_stream_format(stream_format);
+    set_effect_target_params(EffectParams{1.0f, 1.0f});
+
+    const char* spi_device_env = std::getenv("AUDIO_BRIDGE_SPI_DEVICE");
+    const char* spi_speed_env = std::getenv("AUDIO_BRIDGE_SPI_SPEED_HZ");
+
+    uint32_t spi_speed = SPI_SPEED_HZ;
+    if (spi_speed_env && spi_speed_env[0] != '\0') {
+        char* end = nullptr;
+        unsigned long parsed = std::strtoul(spi_speed_env, &end, 10);
+        if (end != spi_speed_env && *end == '\0' && parsed > 0UL) {
+            spi_speed = static_cast<uint32_t>(parsed);
+        }
+    }
+
+    const char* spi_device = (spi_device_env && spi_device_env[0] != '\0')
+        ? spi_device_env
+        : SPI_DEVICE;
+
+    mcp3008_spi_config spi_cfg{};
+    spi_cfg.device = spi_device;
+    spi_cfg.speed_hz = spi_speed;
+    spi_cfg.mode = SPI_MODE_0;
+    spi_cfg.bits_per_word = 8;
+
+    int spi_fd = open_spi_config(&spi_cfg);
+    if (spi_fd < 0)
+    {
+        std::cerr << "warning: failed to open SPI device " << spi_device
+                  << ", running with default effect params\n";
+    }
+    else
+    {
+        AV_DEBUG_LOG(std::cout << "MCP3008 SPI ready: device=" << spi_device
+                               << " speed_hz=" << spi_speed << "\n";);
+    }
 
     // Configure both endpoints with fixed timing settings.
     int cap_cfg_err = configure_device(
@@ -131,6 +175,27 @@ int main()
     int loop_count = 0;
     while (true) // main processing loop
     {
+        if (spi_fd >= 0 && (loop_count % PARAM_UPDATE_EVERY_LOOPS) == 0)
+        {
+            const int channel_1_raw = read_mcp3008(spi_fd, SPI_CHANNEL_1);
+            const int channel_2_raw = read_mcp3008(spi_fd, SPI_CHANNEL_2);
+
+            // Keep SPI inputs decoupled from runtime effect parameters.
+            (void)channel_1_raw;
+            (void)channel_2_raw;
+
+#ifndef NDEBUG
+            uint16_t adc[MCP3008_CHANNELS] = {0};
+            if (read_mcp3008_all(spi_fd, adc) == 0) {
+                std::cerr << "\rmcp raw";
+                for (int ch = 0; ch < MCP3008_CHANNELS; ++ch) {
+                    std::cerr << " channel_" << (ch + 1) << "=" << adc[ch];
+                }
+                std::cerr << "   " << std::flush;
+            }
+#endif
+        }
+
         if (!process_block(
                 handles.capture,
                 handles.playback,
@@ -139,6 +204,11 @@ int main()
         {
             continue; // skip this cycle
         }
+    }
+
+    if (spi_fd >= 0)
+    {
+        close(spi_fd);
     }
 
     snd_pcm_close(handles.capture);  // close input device
