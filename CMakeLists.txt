@@ -31,7 +31,7 @@ add_executable(audio_bridge
     src/device_setup.cpp
     src/io/mcp3008.c
     src/process_audio.cpp
-    effects/reverb.cc
+    effects/vibeverb.cc
     src/process_block_mmap.cpp
     src/loudness_meter.cpp
     src/stream_format.cpp
@@ -85,7 +85,7 @@ add_executable(test_process_block
     src/process_block_mmap.cpp
     src/loudness_meter.cpp
     src/stream_format.cpp
-    effects/reverb.cc
+    effects/vibeverb.cc
 )
 
 add_executable(test_e2e
@@ -94,7 +94,16 @@ add_executable(test_e2e
     src/process_block_mmap.cpp
     src/loudness_meter.cpp
     src/stream_format.cpp
-    effects/reverb.cc
+    effects/vibeverb.cc
+)
+
+add_executable(test_reverb_tail_continuity
+    tests/test_reverb_tail_continuity.cpp
+    src/process_audio.cpp
+    src/process_block_mmap.cpp
+    src/loudness_meter.cpp
+    src/stream_format.cpp
+    effects/vibeverb.cc
 )
 
 target_include_directories(test_process_block PRIVATE
@@ -105,6 +114,13 @@ target_include_directories(test_process_block PRIVATE
 )
 
 target_include_directories(test_e2e PRIVATE
+    ${ALSA_INCLUDE_DIRS}
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/DeciBeliever/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/effects
+)
+
+target_include_directories(test_reverb_tail_continuity PRIVATE
     ${ALSA_INCLUDE_DIRS}
     ${CMAKE_CURRENT_SOURCE_DIR}/src/include
     ${CMAKE_CURRENT_SOURCE_DIR}/DeciBeliever/include
@@ -125,11 +141,22 @@ target_compile_options(test_e2e PRIVATE
     -Wpedantic
 )
 
+target_compile_options(test_reverb_tail_continuity PRIVATE
+    ${ALSA_CFLAGS_OTHER}
+    -Wall
+    -Wextra
+    -Wpedantic
+)
+
 target_link_directories(test_process_block PRIVATE
     ${ALSA_LIBRARY_DIRS}
 )
 
 target_link_directories(test_e2e PRIVATE
+    ${ALSA_LIBRARY_DIRS}
+)
+
+target_link_directories(test_reverb_tail_continuity PRIVATE
     ${ALSA_LIBRARY_DIRS}
 )
 
@@ -143,5 +170,11 @@ target_link_libraries(test_e2e PRIVATE
     ${ALSA_LIBRARIES}
 )
 
+target_link_libraries(test_reverb_tail_continuity PRIVATE
+    DeciBeliever_lib
+    ${ALSA_LIBRARIES}
+)
+
 add_test(NAME test_process_block COMMAND test_process_block)
 add_test(NAME test_e2e COMMAND test_e2e)
+add_test(NAME test_reverb_tail_continuity COMMAND test_reverb_tail_continuity)

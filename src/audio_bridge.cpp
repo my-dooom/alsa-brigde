@@ -37,6 +37,8 @@
 #define SPI_CHANNEL_1 0
 #define SPI_CHANNEL_2 1
 #define PARAM_UPDATE_EVERY_LOOPS 4
+#define MCP_RAW_DEADBAND 4
+#define MCP_SMOOTH_ALPHA 0.12f
 
 // SPI reader thread — polls all channels as fast as the bus allows.
 static std::atomic<bool> g_spi_running{false};
@@ -84,7 +86,7 @@ int main()
 
     AV_DEBUG_LOG(std::cout << "Selected DMA format: " << snd_pcm_format_name(stream_format) << "\n";);
     set_stream_format(stream_format);
-    set_effect_target_params(EffectParams{1.0f, 1.0f});
+    set_effect_target_params(EffectParams{0.62f, 0.24f, 14400});
 
 #ifdef ENABLE_LINK_SYNC
     link_sync_start();
@@ -174,6 +176,31 @@ int main()
         return 1;
     }
 
+    // Query the effective capture sample rate negotiated by ALSA.
+    {
+        snd_pcm_hw_params_t* cap_hw = nullptr;
+        snd_pcm_hw_params_alloca(&cap_hw);
+        err = snd_pcm_hw_params_current(handles.capture, cap_hw);
+        if (err < 0)
+        {
+            std::cerr << "capture hw_params_current failed: " << snd_strerror(err) << "\n";
+            return 1;
+        }
+
+        unsigned capture_rate_hz = 0;
+        int dir = 0;
+        err = snd_pcm_hw_params_get_rate(cap_hw, &capture_rate_hz, &dir);
+        if (err < 0)
+        {
+            std::cerr << "capture get_rate failed: " << snd_strerror(err) << "\n";
+            return 1;
+        }
+
+        AV_DEBUG_LOG(std::cout << "Capture sample rate: " << capture_rate_hz << " Hz"
+                               << (dir > 0 ? " (rounded up)" : (dir < 0 ? " (rounded down)" : ""))
+                               << "\n";);
+    }
+
     // Read effective period/buffer values chosen by ALSA after hw_params negotiation.
     err = snd_pcm_get_params(handles.playback, &buffer_frames, &frames);
     if (err < 0)
@@ -206,6 +233,10 @@ int main()
     AV_DEBUG_LOG(std::cout << "running mmap DMA audio pass-through...\n";);
 
     int loop_count = 0;
+    bool channel_1_initialized = false;
+    int stable_channel_1_raw = 0;
+    float filtered_channel_1_raw = 0.0f;
+
     while (true) // main processing loop
     {
         if ((loop_count % PARAM_UPDATE_EVERY_LOOPS) == 0)
@@ -213,9 +244,35 @@ int main()
             const int channel_1_raw = g_spi_raw[SPI_CHANNEL_1].load(std::memory_order_relaxed);
             const int channel_2_raw = g_spi_raw[SPI_CHANNEL_2].load(std::memory_order_relaxed);
 
-            // Keep SPI inputs decoupled from runtime effect parameters.
-            (void)channel_1_raw;
-            (void)channel_2_raw;
+            if (channel_1_raw >= 0 && channel_2_raw >= 0)
+            {
+                if (!channel_1_initialized) {
+                    stable_channel_1_raw = channel_1_raw;
+                    filtered_channel_1_raw = static_cast<float>(channel_1_raw);
+                    channel_1_initialized = true;
+                }
+
+                if (std::abs(channel_1_raw - stable_channel_1_raw) >= MCP_RAW_DEADBAND) {
+                    stable_channel_1_raw = channel_1_raw;
+                }
+
+                filtered_channel_1_raw += (static_cast<float>(stable_channel_1_raw) - filtered_channel_1_raw)
+                    * MCP_SMOOTH_ALPHA;
+                const long smoothed_channel_1_raw = static_cast<long>(filtered_channel_1_raw + 0.5f);
+
+                const long mapped_mix_pct = map_value(smoothed_channel_1_raw, 0, 1023, 8, 10);
+                const long mapped_decay_milli = map_value(smoothed_channel_1_raw, 0, 1023, 380,700);
+                const long mapped_delay_ms = map_value(smoothed_channel_1_raw, 0, 1023, 300, 4000);
+
+                const float reverb_mix = static_cast<float>(mapped_mix_pct) / 100.0f;
+                const float reverb_decay = static_cast<float>(mapped_decay_milli) / 1000.0f;
+                const size_t delay_len = static_cast<size_t>((static_cast<float>(mapped_delay_ms) * SAMPLE_RATE / 1000.0f) + 0.5f);
+
+                // channel_2 stays reserved for future effect branches.
+                (void)channel_2_raw;
+
+                set_effect_target_params(EffectParams{reverb_decay, reverb_mix, delay_len});
+            }
 
 #ifdef ENABLE_LINK_SYNC
             {
