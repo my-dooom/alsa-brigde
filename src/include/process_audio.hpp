@@ -1,11 +1,13 @@
 #pragma once
 
 #include <alsa/asoundlib.h>
+#include <cstddef>
 #include <cstdint>
 
 struct EffectParams {
-	float output_gain;
-	float wet_mix;
+	float reverb_decay;
+	float reverb_mix;
+	size_t reverb_delay_len;
 };
 
 void set_effect_target_params(const EffectParams& params);
