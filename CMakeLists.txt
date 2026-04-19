@@ -55,6 +55,7 @@ target_link_directories(audio_bridge PRIVATE
 
 target_link_libraries(audio_bridge PRIVATE
     ${ALSA_LIBRARIES}
+    pthread
 )
 
 install(TARGETS audio_bridge RUNTIME DESTINATION bin)

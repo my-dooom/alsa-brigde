@@ -1,8 +1,10 @@
 #include <alsa/asoundlib.h> // alsa api for pcm audio capture/playback
+#include <atomic>
 #include <cstdlib>          // getenv, strtoul
 #include <iostream>         // std::cout / std::cerr
 #include <linux/spi/spidev.h>
 #include <string>           // std::string for device names
+#include <thread>
 #include <unistd.h>         // close
 
 #include "audio_config.hpp"
@@ -35,6 +37,21 @@
 #define SPI_CHANNEL_1 0
 #define SPI_CHANNEL_2 1
 #define PARAM_UPDATE_EVERY_LOOPS 4
+
+// SPI reader thread — polls all channels as fast as the bus allows.
+static std::atomic<bool> g_spi_running{false};
+static std::atomic<int>  g_spi_raw[MCP3008_CHANNELS]; // -1 until first valid read
+
+static void spi_reader_loop(int fd)
+{
+    uint16_t buf[MCP3008_CHANNELS];
+    while (g_spi_running.load(std::memory_order_relaxed)) {
+        if (read_mcp3008_all(fd, buf) == 0) {
+            for (int i = 0; i < MCP3008_CHANNELS; ++i)
+                g_spi_raw[i].store(static_cast<int>(buf[i]), std::memory_order_relaxed);
+        }
+    }
+}
 
 int main()
 {
@@ -105,6 +122,15 @@ int main()
     {
         AV_DEBUG_LOG(std::cout << "MCP3008 SPI ready: device=" << spi_device
                                << " speed_hz=" << spi_speed << "\n";);
+    }
+
+    // Initialise SPI atomics and start reader thread.
+    for (int i = 0; i < MCP3008_CHANNELS; ++i)
+        g_spi_raw[i].store(-1, std::memory_order_relaxed);
+    std::thread spi_thread;
+    if (spi_fd >= 0) {
+        g_spi_running.store(true, std::memory_order_relaxed);
+        spi_thread = std::thread(spi_reader_loop, spi_fd);
     }
 
     // Configure both endpoints with fixed timing settings.
@@ -182,10 +208,10 @@ int main()
     int loop_count = 0;
     while (true) // main processing loop
     {
-        if (spi_fd >= 0 && (loop_count % PARAM_UPDATE_EVERY_LOOPS) == 0)
+        if ((loop_count % PARAM_UPDATE_EVERY_LOOPS) == 0)
         {
-            const int channel_1_raw = read_mcp3008(spi_fd, SPI_CHANNEL_1);
-            const int channel_2_raw = read_mcp3008(spi_fd, SPI_CHANNEL_2);
+            const int channel_1_raw = g_spi_raw[SPI_CHANNEL_1].load(std::memory_order_relaxed);
+            const int channel_2_raw = g_spi_raw[SPI_CHANNEL_2].load(std::memory_order_relaxed);
 
             // Keep SPI inputs decoupled from runtime effect parameters.
             (void)channel_1_raw;
@@ -207,11 +233,10 @@ int main()
 #endif
 
 #ifndef NDEBUG
-            uint16_t adc[MCP3008_CHANNELS] = {0};
-            if (read_mcp3008_all(spi_fd, adc) == 0) {
+            {
                 std::cerr << "\rmcp raw";
                 for (int ch = 0; ch < MCP3008_CHANNELS; ++ch) {
-                    std::cerr << " channel_" << (ch + 1) << "=" << adc[ch];
+                    std::cerr << " channel_" << (ch + 1) << "=" << g_spi_raw[ch].load(std::memory_order_relaxed);
                 }
                 std::cerr << "   " << std::flush;
             }
@@ -228,6 +253,10 @@ int main()
         }
     }
 
+    if (spi_thread.joinable()) {
+        g_spi_running.store(false, std::memory_order_relaxed);
+        spi_thread.join();
+    }
     if (spi_fd >= 0)
     {
         close(spi_fd);
