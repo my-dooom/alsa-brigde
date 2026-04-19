@@ -32,6 +32,7 @@ add_executable(audio_bridge
     src/io/mcp3008.c
     src/process_audio.cpp
     effects/vibeverb.cc
+    effects/highpass.cc
     src/process_block_mmap.cpp
     src/loudness_meter.cpp
     src/stream_format.cpp
@@ -86,6 +87,7 @@ add_executable(test_process_block
     src/loudness_meter.cpp
     src/stream_format.cpp
     effects/vibeverb.cc
+    effects/highpass.cc
 )
 
 add_executable(test_e2e
@@ -95,6 +97,7 @@ add_executable(test_e2e
     src/loudness_meter.cpp
     src/stream_format.cpp
     effects/vibeverb.cc
+    effects/highpass.cc
 )
 
 add_executable(test_reverb_tail_continuity
@@ -104,6 +107,7 @@ add_executable(test_reverb_tail_continuity
     src/loudness_meter.cpp
     src/stream_format.cpp
     effects/vibeverb.cc
+    effects/highpass.cc
 )
 
 target_include_directories(test_process_block PRIVATE

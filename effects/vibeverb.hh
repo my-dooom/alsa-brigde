@@ -1,5 +1,7 @@
 #pragma once
 
+#include "highpass.hh"
+
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -8,7 +10,7 @@ namespace mydoom {
 
 class Vibeverb {
 public:
-    Vibeverb(float decay, size_t delay_len, size_t channels = 2);
+    Vibeverb(float decay, size_t delay_len, size_t channels = 2, float sample_rate = 48000.0f);
 
     void set_decay(float decay);
     void set_delay_length(size_t delay_len);
@@ -39,6 +41,8 @@ private:
     std::vector<std::vector<float>> comb_damp_state_;
 
     std::vector<float> crossfeed_state_;
+
+    HighPassFilter hpf_;
 };
 
 } // namespace mydoom

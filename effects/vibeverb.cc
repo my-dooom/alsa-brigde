@@ -27,11 +27,13 @@ constexpr float kStereoCrossfeed = 0.20f;
 namespace mydoom {
 
 // default mix starts around 35% wet
-Vibeverb::Vibeverb(float decay, size_t delay_len, size_t channels)
+Vibeverb::Vibeverb(float decay, size_t delay_len, size_t channels, float sample_rate)
     : decay_(clampf(decay, 0.0f, 0.98f)),
       mix_(0.35f),
       base_delay_len_(delay_len > 0 ? delay_len : 1),
-      channels_(channels > 0 ? channels : 1) {
+      channels_(channels > 0 ? channels : 1),
+      hpf_(sample_rate, channels > 0 ? channels : 1) {
+    hpf_.set_mix(0.35f);
     rebuild_state();
 }
 
@@ -107,6 +109,7 @@ void Vibeverb::set_delay_length(size_t delay_len) {
 // keep wet mix within 0..1
 void Vibeverb::set_mix(float wet_mix) {
     mix_ = clampf(wet_mix, 0.0f, 1.0f);
+    hpf_.set_mix(mix_);
 }
 
 void Vibeverb::reset() {
@@ -136,6 +139,7 @@ void Vibeverb::reset() {
         std::fill(states.begin(), states.end(), 0.0f);
     }
     std::fill(crossfeed_state_.begin(), crossfeed_state_.end(), 0.0f);
+    hpf_.reset();
 }
 
 float Vibeverb::process_allpass(std::vector<float>& line, size_t& index, float input, float coeff) {
@@ -223,8 +227,11 @@ void Vibeverb::process_interleaved(int32_t* buffer, size_t frames, size_t channe
 
             crossfeed_state_[ch] = wet;
 
+            // HPF on wet only; cutoff follows mix (20 Hz at 0%, 10 kHz at 100%)
+            const float wet_filtered = wet;  //hpf_.process_sample(wet, ch);
+
             // mix: dry always full, wet scaled by mix_
-            const float out = dry + wet * mix_ * 3.0f; // extra gain on the wet signal to compensate for diffusion losses
+            const float out = dry + wet_filtered * mix_ * 3.0f; // extra gain on the wet signal to compensate for diffusion losses
             const float clipped = clampf(out, -1.0f, 1.0f);
             buffer[idx] = static_cast<int32_t>(clipped * kScale);
         }

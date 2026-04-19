@@ -36,9 +36,9 @@
 #define SPI_DEVICE "/dev/spidev0.0"
 #define SPI_CHANNEL_1 0
 #define SPI_CHANNEL_2 1
-#define PARAM_UPDATE_EVERY_LOOPS 4
+#define PARAM_UPDATE_EVERY_LOOPS 1
 #define MCP_RAW_DEADBAND 4
-#define MCP_SMOOTH_ALPHA 0.12f
+#define MCP_SMOOTH_ALPHA 1.0f
 
 // SPI reader thread — polls all channels as fast as the bus allows.
 static std::atomic<bool> g_spi_running{false};

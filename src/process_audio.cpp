@@ -1,5 +1,6 @@
 #include "process_audio.hpp"
 
+#include "highpass.hh"
 #include "process_block_mmap.hpp"
 #include "stream_format.hpp"
 #include "vibeverb.hh"
@@ -63,6 +64,7 @@ void process_samples_inplace(int32_t* buffer_ptr, snd_pcm_uframes_t frames, unsi
     static float smoothed_mix = 0.35f;
     static uint32_t smoothed_delay_len = 1728;
     static mydoom::Vibeverb vibeverb(0.65f, 1728, 2);
+    static mydoom::HighPassFilter hpf(48000.0f, 2);
 
     const float target_decay = g_target_decay.load(std::memory_order_relaxed);
     const float target_mix = g_target_mix.load(std::memory_order_relaxed);
@@ -75,6 +77,9 @@ void process_samples_inplace(int32_t* buffer_ptr, snd_pcm_uframes_t frames, unsi
     vibeverb.set_decay(smoothed_decay);
     vibeverb.set_mix(smoothed_mix);
     vibeverb.set_delay_length(static_cast<size_t>(smoothed_delay_len));
+
+    hpf.set_mix(smoothed_mix);
+    hpf.process_interleaved(buffer_ptr, static_cast<size_t>(frames), static_cast<size_t>(channels));
     vibeverb.process_interleaved(buffer_ptr, static_cast<size_t>(frames), static_cast<size_t>(channels));
 
     g_smoothed_decay_snapshot.store(smoothed_decay, std::memory_order_relaxed);
