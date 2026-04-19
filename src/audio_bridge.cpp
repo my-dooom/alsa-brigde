@@ -9,6 +9,9 @@
 #include "device_setup.hpp"
 #include "mcp3008.h"
 #include "process_audio.hpp"
+#ifdef ENABLE_LINK_SYNC
+#include "link_sync.hpp"
+#endif
 
 #ifndef NDEBUG
 #define AV_DEBUG_LOG(stmt) \
@@ -65,6 +68,10 @@ int main()
     AV_DEBUG_LOG(std::cout << "Selected DMA format: " << snd_pcm_format_name(stream_format) << "\n";);
     set_stream_format(stream_format);
     set_effect_target_params(EffectParams{1.0f, 1.0f});
+
+#ifdef ENABLE_LINK_SYNC
+    link_sync_start();
+#endif
 
     const char* spi_device_env = std::getenv("AUDIO_BRIDGE_SPI_DEVICE");
     const char* spi_speed_env = std::getenv("AUDIO_BRIDGE_SPI_SPEED_HZ");
@@ -184,6 +191,21 @@ int main()
             (void)channel_1_raw;
             (void)channel_2_raw;
 
+#ifdef ENABLE_LINK_SYNC
+            {
+                const float link_bpm = link_sync_get_bpm();
+                if (link_bpm > 0.0f) {
+                    // beat_samples = samples per beat at current Link tempo
+                    // e.g. at 128 BPM: 48000*60/128 = 22500 samples
+                    const float beat_samples =
+                        (static_cast<float>(SAMPLE_RATE) * 60.0f) / link_bpm;
+                    (void)beat_samples; // wire to effect param when delay is added
+                    AV_DEBUG_LOG(std::cout << "Link BPM: " << link_bpm
+                                          << "  beat_samples: " << beat_samples << "\n";);
+                }
+            }
+#endif
+
 #ifndef NDEBUG
             uint16_t adc[MCP3008_CHANNELS] = {0};
             if (read_mcp3008_all(spi_fd, adc) == 0) {
@@ -210,6 +232,10 @@ int main()
     {
         close(spi_fd);
     }
+
+#ifdef ENABLE_LINK_SYNC
+    link_sync_stop();
+#endif
 
     snd_pcm_close(handles.capture);  // close input device
     snd_pcm_close(handles.playback); // close output device

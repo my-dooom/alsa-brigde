@@ -1,7 +1,12 @@
 #include "loudness_meter.hpp"
 
 #include <cmath>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
+#ifdef ENABLE_LINK_SYNC
+#include "link_sync.hpp"
+#endif
 
 void LoudnessMeter::render_if_due(int loop_count, const int32_t* interleaved_stereo, size_t frame_count) {
     // Throttle meter updates and guard against invalid input.
@@ -39,9 +44,17 @@ void LoudnessMeter::render_if_due(int loop_count, const int32_t* interleaved_ste
     const int bars_l = static_cast<int>(((db_l + 60.0) / 60.0) * meter_width);
     const int bars_r = static_cast<int>(((db_r + 60.0) / 60.0) * meter_width);
 
-    // Redraw in-place on two lines (R on top, L on bottom).
+    // Redraw in-place: 2 meter lines + optional Link line.
+    // Cursor rests at the end of the last printed line (no trailing \n).
+    // \r moves to column 0 of that line; each \033[1A moves up one line.
+    // 2-line layout: cursor on L  → \r\033[1A        lands on R.
+    // 3-line layout: cursor on Link → \r\033[1A\033[1A lands on R.
     if (initialized_) {
+#ifdef ENABLE_LINK_SYNC
+        std::cout << "\r\033[1A\033[1A";
+#else
         std::cout << "\r\033[1A";
+#endif
     } else {
         initialized_ = true;
     }
@@ -53,5 +66,18 @@ void LoudnessMeter::render_if_due(int loop_count, const int32_t* interleaved_ste
 
     std::cout << "\033[2KL [";
     for (int i = 0; i < meter_width; ++i) std::cout << (i < bars_l ? '#' : ' ');
-    std::cout << "] " << db_l << " dBFS" << std::flush;
+    std::cout << "] " << db_l << " dBFS\n";
+
+#ifdef ENABLE_LINK_SYNC
+    {
+        const float bpm = link_sync_get_bpm();
+        std::cout << "\033[2KLink: ";
+        if (bpm > 0.0f) {
+            std::cout << std::fixed << std::setprecision(2) << bpm << " BPM";
+        } else {
+            std::cout << (link_sync_connected() ? "connected, no peers" : "not connected");
+        }
+    }
+#endif
+    std::cout << std::flush;
 }

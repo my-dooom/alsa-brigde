@@ -59,6 +59,19 @@ target_link_libraries(audio_bridge PRIVATE
 
 install(TARGETS audio_bridge RUNTIME DESTINATION bin)
 
+# ---------------------------------------------------------------------------
+# Optional Ableton Link tempo sync via Carabiner TCP bridge
+# Requires a running Carabiner instance on the same host (default port 17000).
+# Enable with: cmake -DENABLE_LINK_SYNC=ON ..
+# ---------------------------------------------------------------------------
+option(ENABLE_LINK_SYNC "Connect to Carabiner for Ableton Link tempo sync" OFF)
+
+if(ENABLE_LINK_SYNC)
+    target_sources(audio_bridge PRIVATE src/link_sync.cpp)
+    target_compile_definitions(audio_bridge PRIVATE ENABLE_LINK_SYNC)
+    message(STATUS "Ableton Link sync via Carabiner: ENABLED")
+endif()
+
 add_subdirectory(DeciBeliever EXCLUDE_FROM_ALL)
 
 enable_testing()
