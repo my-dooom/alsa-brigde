@@ -86,7 +86,7 @@ int main()
 
     AV_DEBUG_LOG(std::cout << "Selected DMA format: " << snd_pcm_format_name(stream_format) << "\n";);
     set_stream_format(stream_format);
-    set_effect_target_params(EffectParams{0.62f, 0.24f, 14400});
+    set_effect_target_params(EffectParams{0.70f, 0.30f, 9600});
 
 #ifdef ENABLE_LINK_SYNC
     link_sync_start();
@@ -252,23 +252,27 @@ int main()
                     channel_1_initialized = true;
                 }
 
+                // ignore tiny adc jitter unless it moves more than the deadband
                 if (std::abs(channel_1_raw - stable_channel_1_raw) >= MCP_RAW_DEADBAND) {
                     stable_channel_1_raw = channel_1_raw;
                 }
 
+                // smooth the stable adc value so the effect params drift slowly
                 filtered_channel_1_raw += (static_cast<float>(stable_channel_1_raw) - filtered_channel_1_raw)
                     * MCP_SMOOTH_ALPHA;
                 const long smoothed_channel_1_raw = static_cast<long>(filtered_channel_1_raw + 0.5f);
 
-                const long mapped_mix_pct = map_value(smoothed_channel_1_raw, 0, 1023, 8, 10);
-                const long mapped_decay_milli = map_value(smoothed_channel_1_raw, 0, 1023, 380,700);
-                const long mapped_delay_ms = map_value(smoothed_channel_1_raw, 0, 1023, 300, 4000);
+                // convert the 10 bit value into normal reverb ranges
+                const long mapped_mix_pct = map_value(smoothed_channel_1_raw, 0, 1023, 0, 100);  // 0..100% wet
+                const long mapped_decay_milli = map_value(smoothed_channel_1_raw, 0, 1023, 670, 670); // TODO: finetune decay; 0.1..0.2s
+                const long mapped_delay_ms = map_value(smoothed_channel_1_raw, 0, 1023, 10, 200); // TODO: finetune ; 180..300ms predelay
 
-                const float reverb_mix = static_cast<float>(mapped_mix_pct) / 100.0f;
-                const float reverb_decay = static_cast<float>(mapped_decay_milli) / 1000.0f;
+                const float reverb_mix = static_cast<float>(mapped_mix_pct) / 100.0f; // 10..70% wet
+                const float reverb_decay = static_cast<float>(mapped_decay_milli) / 1000.0f; // 0.1..0.2s
                 const size_t delay_len = static_cast<size_t>((static_cast<float>(mapped_delay_ms) * SAMPLE_RATE / 1000.0f) + 0.5f);
+                // delay_len is samples at SAMPLE_RATE
 
-                // channel_2 stays reserved for future effect branches.
+                // for future 
                 (void)channel_2_raw;
 
                 set_effect_target_params(EffectParams{reverb_decay, reverb_mix, delay_len});
@@ -319,12 +323,14 @@ int main()
         close(spi_fd);
     }
 
+
 #ifdef ENABLE_LINK_SYNC
     link_sync_stop();
 #endif
 
     snd_pcm_close(handles.capture);  // close input device
     snd_pcm_close(handles.playback); // close output device
+
 
     return 0; // exit program
 }

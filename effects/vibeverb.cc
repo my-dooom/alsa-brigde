@@ -9,28 +9,35 @@ float clampf(float v, float lo, float hi) {
     return std::max(lo, std::min(v, hi));
 }
 
-size_t next_power_of_two(size_t value) {
-    size_t p = 1;
-    while (p < value) {
-        p <<= 1;
-    }
-    return p;
-}
+// more comb filters in parallel to make the tail thicker
+constexpr size_t kCombCount = 16;
+
+// two diffusion passes to spread the input before the combs
+constexpr float kInputDiffusionA = 0.72f;
+constexpr float kInputDiffusionB = 0.64f;
+
+// damping inside the tank so the combs dont stay too bright
+constexpr float kTankDamping = 0.40f;
+
+// small stereo bleed between channels for a wider sound
+constexpr float kStereoCrossfeed = 0.20f;
 
 } // namespace
 
 namespace mydoom {
 
+// default mix starts around 35% wet
 Vibeverb::Vibeverb(float decay, size_t delay_len, size_t channels)
-    : decay_(clampf(decay, 0.0f, 0.999f)),
+    : decay_(clampf(decay, 0.0f, 0.98f)),
       mix_(0.35f),
       base_delay_len_(delay_len > 0 ? delay_len : 1),
       channels_(channels > 0 ? channels : 1) {
     rebuild_state();
 }
 
+// keep the feedback below 1 so the reverb stays stable
 void Vibeverb::set_decay(float decay) {
-    decay_ = clampf(decay, 0.0f, 0.999f);
+    decay_ = clampf(decay, 0.0f, 0.98f);
 }
 
 void Vibeverb::set_delay_length(size_t delay_len) {
@@ -39,7 +46,16 @@ void Vibeverb::set_delay_length(size_t delay_len) {
         return;
     }
 
-    if (delay_lines_.size() != channels_ || write_index_.size() != channels_ || tap_offset_.size() != channels_) {
+    if (predelay_lines_.size() != channels_ ||
+        predelay_index_.size() != channels_ ||
+        diffuser_a_lines_.size() != channels_ ||
+        diffuser_a_index_.size() != channels_ ||
+        diffuser_b_lines_.size() != channels_ ||
+        diffuser_b_index_.size() != channels_ ||
+        comb_lines_.size() != channels_ ||
+        comb_index_.size() != channels_ ||
+        comb_damp_state_.size() != channels_ ||
+        crossfeed_state_.size() != channels_) {
         base_delay_len_ = clamped;
         rebuild_state();
         return;
@@ -47,39 +63,94 @@ void Vibeverb::set_delay_length(size_t delay_len) {
 
     base_delay_len_ = clamped;
 
-    // Retune delay lengths while preserving accumulated tail data.
-    for (size_t ch = 0; ch < channels_; ++ch) {
-        const size_t spread = (ch * (base_delay_len_ / 5 + 1)) + ch + 1;
-        const size_t new_delay_len = base_delay_len_ + spread;
+    // relative comb lengths so each parallel path is different
+    constexpr float kCombScale[kCombCount] = {
+        1.00f, 1.13f, 1.31f, 1.41f, 1.57f, 1.73f, 1.89f, 2.03f,
+        2.11f, 2.23f, 2.37f, 2.51f, 2.63f, 2.77f, 2.89f, 3.13f
+    };
 
-        std::vector<float>& line = delay_lines_[ch];
-        line.resize(new_delay_len, 0.0f);
-        if (line.empty()) {
-            line.assign(1, 0.0f);
+    for (size_t ch = 0; ch < channels_; ++ch) {
+        if (comb_lines_[ch].size() != kCombCount ||
+            comb_index_[ch].size() != kCombCount ||
+            comb_damp_state_[ch].size() != kCombCount) {
+            rebuild_state();
+            return;
         }
 
-        write_index_[ch] %= line.size();
-        const size_t min_tap = std::min(line.size(), std::max<size_t>(32, line.size() / 4));
-        if (min_tap >= line.size()) {
-            tap_offset_[ch] = line.size();
-        } else {
-            const size_t variable_span = line.size() - min_tap;
-            tap_offset_[ch] = min_tap + (spread % variable_span);
+        // minimum base length and slight channel offset so the two channels differ
+        const size_t base = std::max<size_t>(128, base_delay_len_ + ch * (base_delay_len_ / 9 + 29));
+
+        // simple predelay before the diffusers
+        const size_t predelay_len = std::max<size_t>(64, base / 3);
+        predelay_lines_[ch].resize(predelay_len, 0.0f);
+        predelay_index_[ch] %= predelay_lines_[ch].size();
+
+        // two diffuser lengths chosen to avoid metallic resonance
+        const size_t diff_a_len = std::max<size_t>(47, base / 7 + 31 + ch * 7);
+        const size_t diff_b_len = std::max<size_t>(83, base / 5 + 59 + ch * 11);
+        diffuser_a_lines_[ch].resize(diff_a_len, 0.0f);
+        diffuser_b_lines_[ch].resize(diff_b_len, 0.0f);
+        diffuser_a_index_[ch] %= diffuser_a_lines_[ch].size();
+        diffuser_b_index_[ch] %= diffuser_b_lines_[ch].size();
+
+        for (size_t i = 0; i < kCombCount; ++i) {
+            // stagger comb lengths for a fuller tail
+            // minimum 127 samples to avoid too short comb delay
+            const size_t comb_len = std::max<size_t>(127,
+                static_cast<size_t>(base * kCombScale[i]) + i * 41 + ch * 17);
+            comb_lines_[ch][i].resize(comb_len, 0.0f);
+            comb_index_[ch][i] %= comb_lines_[ch][i].size();
         }
     }
 }
 
+// keep wet mix within 0..1
 void Vibeverb::set_mix(float wet_mix) {
     mix_ = clampf(wet_mix, 0.0f, 1.0f);
 }
 
 void Vibeverb::reset() {
-    for (auto& line : delay_lines_) {
+    for (auto& line : predelay_lines_) {
         std::fill(line.begin(), line.end(), 0.0f);
     }
-    std::fill(write_index_.begin(), write_index_.end(), 0);
-    std::fill(stage_.begin(), stage_.end(), 0.0f);
-    std::fill(diffusion_state_.begin(), diffusion_state_.end(), 0.0f);
+    for (auto& line : diffuser_a_lines_) {
+        std::fill(line.begin(), line.end(), 0.0f);
+    }
+    for (auto& line : diffuser_b_lines_) {
+        std::fill(line.begin(), line.end(), 0.0f);
+    }
+    for (auto& channel_combs : comb_lines_) {
+        for (auto& line : channel_combs) {
+            std::fill(line.begin(), line.end(), 0.0f);
+        }
+    }
+
+    std::fill(predelay_index_.begin(), predelay_index_.end(), 0);
+    std::fill(diffuser_a_index_.begin(), diffuser_a_index_.end(), 0);
+    std::fill(diffuser_b_index_.begin(), diffuser_b_index_.end(), 0);
+
+    for (auto& idxs : comb_index_) {
+        std::fill(idxs.begin(), idxs.end(), 0);
+    }
+    for (auto& states : comb_damp_state_) {
+        std::fill(states.begin(), states.end(), 0.0f);
+    }
+    std::fill(crossfeed_state_.begin(), crossfeed_state_.end(), 0.0f);
+}
+
+float Vibeverb::process_allpass(std::vector<float>& line, size_t& index, float input, float coeff) {
+    if (line.empty()) {
+        return input;
+    }
+
+    // Classic all-pass filter structure used for diffusion: it preserves energy
+    // while spreading transients in time, which helps avoid metallic comb ringing.
+    const float delayed = line[index];
+    const float output = delayed - coeff * input;
+    line[index] = input + coeff * output;
+
+    index = (index + 1) % line.size();
+    return output;
 }
 
 void Vibeverb::process_interleaved(int32_t* buffer, size_t frames, size_t channels) {
@@ -92,50 +163,68 @@ void Vibeverb::process_interleaved(int32_t* buffer, size_t frames, size_t channe
         return;
     }
 
+    // scale 32-bit pcm to float and back
     constexpr float kScale = 2147483647.0f;
     constexpr float kInvScale = 1.0f / kScale;
-    constexpr float kDiffusionSmoothing = 0.92f;
-    constexpr float kCrossfeedNext = 0.28f;
-    constexpr float kCrossfeedPrev = 0.28f;
+    // average the comb outputs so the wet level stays stable
+    const float comb_norm = 1.0f / static_cast<float>(kCombCount);
+
+    std::vector<float> wet_values(active_channels, 0.0f);
 
     for (size_t frame = 0; frame < frames; ++frame) {
         for (size_t ch = 0; ch < active_channels; ++ch) {
-            const size_t source_ch = shuffle_index_[ch];
-            const std::vector<float>& source_line = delay_lines_[source_ch];
-            const size_t source_write = write_index_[source_ch];
-            const size_t source_size = source_line.size();
-            const size_t source_read = (source_write + source_size - tap_offset_[source_ch]) % source_size;
-            const float shuffled = source_line[source_read] * polarity_[ch];
-
             const size_t idx = frame * channels + ch;
             const float dry = static_cast<float>(buffer[idx]) * kInvScale;
-            stage_[ch] = dry + shuffled * decay_;
+
+            float x = dry;
+
+            std::vector<float>& pre = predelay_lines_[ch];
+            if (!pre.empty()) {
+                float delayed = pre[predelay_index_[ch]];
+                pre[predelay_index_[ch]] = x;
+                predelay_index_[ch] = (predelay_index_[ch] + 1) % pre.size();
+                x = delayed;
+            }
+
+            x = process_allpass(diffuser_a_lines_[ch], diffuser_a_index_[ch], x, kInputDiffusionA);
+            x = process_allpass(diffuser_b_lines_[ch], diffuser_b_index_[ch], x, kInputDiffusionB);
+
+            float comb_sum = 0.0f;
+            for (size_t i = 0; i < kCombCount; ++i) {
+                std::vector<float>& comb = comb_lines_[ch][i];
+                if (comb.empty()) {
+                    continue;
+                }
+
+                size_t& w = comb_index_[ch][i];
+                const float delayed = comb[w];
+
+                float& damp_state = comb_damp_state_[ch][i];
+                damp_state = damp_state * kTankDamping + delayed * (1.0f - kTankDamping);
+
+                const float feedback_in = x + damp_state * decay_;
+                comb[w] = feedback_in;
+                w = (w + 1) % comb.size();
+
+                comb_sum += damp_state;
+            }
+
+            float wet = comb_sum * comb_norm;
+            const size_t other = (ch + 1) % active_channels;
+            // small crossfeed from other channel for stereo width
+            wet = wet * (1.0f - kStereoCrossfeed) + crossfeed_state_[other] * kStereoCrossfeed;
+            wet_values[ch] = wet;
         }
 
-        std::copy(stage_.begin(), stage_.begin() + active_channels, hadamard_buffer_.begin());
-        hadamard_in_place(hadamard_buffer_);
-        const float normalizer = 1.0f / std::sqrt(static_cast<float>(next_power_of_two(active_channels)));
-
         for (size_t ch = 0; ch < active_channels; ++ch) {
-            hadamard_buffer_[ch] *= normalizer;
-
-            const size_t next_neighbor = (ch + 1) % active_channels;
-            const size_t prev_neighbor = (ch + active_channels - 1) % active_channels;
-            const float cross = hadamard_buffer_[next_neighbor] * kCrossfeedNext
-                + hadamard_buffer_[prev_neighbor] * kCrossfeedPrev;
-            const float diffused = hadamard_buffer_[ch] + cross;
-            const float smoothed = diffusion_state_[ch] * kDiffusionSmoothing
-                + diffused * (1.0f - kDiffusionSmoothing);
-            diffusion_state_[ch] = smoothed;
-
-            std::vector<float>& line = delay_lines_[ch];
-            line[write_index_[ch]] = smoothed;
-            write_index_[ch] = (write_index_[ch] + 1) % line.size();
-
             const size_t idx = frame * channels + ch;
             const float dry = static_cast<float>(buffer[idx]) * kInvScale;
-            const float wet = smoothed;
-            const float out = dry * (1.0f - mix_) + wet * mix_;
+            const float wet = wet_values[ch];
+
+            crossfeed_state_[ch] = wet;
+
+            // mix: dry always full, wet scaled by mix_
+            const float out = dry + wet * mix_ * 3.0f; // extra gain on the wet signal to compensate for diffusion losses
             const float clipped = clampf(out, -1.0f, 1.0f);
             buffer[idx] = static_cast<int32_t>(clipped * kScale);
         }
@@ -143,54 +232,47 @@ void Vibeverb::process_interleaved(int32_t* buffer, size_t frames, size_t channe
 }
 
 void Vibeverb::rebuild_state() {
-    delay_lines_.assign(channels_, {});
-    write_index_.assign(channels_, 0);
-    tap_offset_.assign(channels_, 1);
-    shuffle_index_.assign(channels_, 0);
-    polarity_.assign(channels_, 1.0f);
-    stage_.assign(channels_, 0.0f);
-    hadamard_buffer_.assign(channels_, 0.0f);
-    diffusion_state_.assign(channels_, 0.0f);
+    predelay_lines_.assign(channels_, {});
+    predelay_index_.assign(channels_, 0);
 
-    // Use staggered delays so channels decorrelate and create a wider tail.
+    diffuser_a_lines_.assign(channels_, {});
+    diffuser_a_index_.assign(channels_, 0);
+    diffuser_b_lines_.assign(channels_, {});
+    diffuser_b_index_.assign(channels_, 0);
+
+    comb_lines_.assign(channels_, std::vector<std::vector<float>>(kCombCount));
+    comb_index_.assign(channels_, std::vector<size_t>(kCombCount, 0));
+    comb_damp_state_.assign(channels_, std::vector<float>(kCombCount, 0.0f));
+
+    crossfeed_state_.assign(channels_, 0.0f);
+
+    // relative comb lengths for the late tail
+    constexpr float kCombScale[kCombCount] = {
+        1.00f, 1.13f, 1.31f, 1.41f, 1.57f, 1.73f, 1.89f, 2.03f,
+        2.11f, 2.23f, 2.37f, 2.51f, 2.63f, 2.77f, 2.89f, 3.13f
+    };
+
     for (size_t ch = 0; ch < channels_; ++ch) {
-        const size_t spread = (ch * (base_delay_len_ / 5 + 1)) + ch + 1;
-        const size_t delay_len = base_delay_len_ + spread;
-        delay_lines_[ch].assign(delay_len, 0.0f);
-        const size_t min_tap = std::min(delay_len, std::max<size_t>(32, delay_len / 4));
-        if (min_tap >= delay_len) {
-            tap_offset_[ch] = delay_len;
-        } else {
-            const size_t variable_span = delay_len - min_tap;
-            tap_offset_[ch] = min_tap + (spread % variable_span);
-        }
+        // minimum base length and per-channel offset
+        const size_t base = std::max<size_t>(128, base_delay_len_ + ch * (base_delay_len_ / 9 + 29));
 
-        shuffle_index_[ch] = (ch * 3 + 1) % channels_;
-        polarity_[ch] = (ch % 2 == 0) ? 1.0f : -1.0f;
-    }
-}
+        // minimum predelay length for early spacing
+        const size_t predelay_len = std::max<size_t>(64, base / 3);
+        predelay_lines_[ch].assign(predelay_len, 0.0f);
 
-void Vibeverb::hadamard_in_place(std::vector<float>& values) {
-    if (values.empty()) {
-        return;
-    }
+        // diffuser lengths chosen to reduce metallic ringing
+        const size_t diff_a_len = std::max<size_t>(47, base / 7 + 31 + ch * 7);
+        const size_t diff_b_len = std::max<size_t>(83, base / 5 + 59 + ch * 11);
+        diffuser_a_lines_[ch].assign(diff_a_len, 0.0f);
+        diffuser_b_lines_[ch].assign(diff_b_len, 0.0f);
 
-    const size_t original_size = values.size();
-    const size_t padded = next_power_of_two(original_size);
-    values.resize(padded, 0.0f);
-
-    for (size_t len = 1; len < padded; len <<= 1) {
-        for (size_t i = 0; i < padded; i += (len << 1)) {
-            for (size_t j = 0; j < len; ++j) {
-                const float a = values[i + j];
-                const float b = values[i + j + len];
-                values[i + j] = a + b;
-                values[i + j + len] = a - b;
-            }
+        for (size_t i = 0; i < kCombCount; ++i) {
+            // minimum comb delay length and stagger offsets
+            const size_t comb_len = std::max<size_t>(127,
+                static_cast<size_t>(base * kCombScale[i]) + i * 41 + ch * 17);
+            comb_lines_[ch][i].assign(comb_len, 0.0f);
         }
     }
-
-    values.resize(original_size);
 }
 
 } // namespace mydoom

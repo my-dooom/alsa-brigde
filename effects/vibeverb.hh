@@ -19,21 +19,26 @@ public:
 
 private:
     void rebuild_state();
-    static void hadamard_in_place(std::vector<float>& values);
+    static float process_allpass(std::vector<float>& line, size_t& index, float input, float coeff);
 
     float decay_;
     float mix_;
     size_t base_delay_len_;
     size_t channels_;
 
-    std::vector<std::vector<float>> delay_lines_;
-    std::vector<size_t> write_index_;
-    std::vector<size_t> tap_offset_;
-    std::vector<size_t> shuffle_index_;
-    std::vector<float> polarity_;
-    std::vector<float> stage_;
-    std::vector<float> hadamard_buffer_;
-    std::vector<float> diffusion_state_;
+    std::vector<std::vector<float>> predelay_lines_;
+    std::vector<size_t> predelay_index_;
+
+    std::vector<std::vector<float>> diffuser_a_lines_;
+    std::vector<size_t> diffuser_a_index_;
+    std::vector<std::vector<float>> diffuser_b_lines_;
+    std::vector<size_t> diffuser_b_index_;
+
+    std::vector<std::vector<std::vector<float>>> comb_lines_;
+    std::vector<std::vector<size_t>> comb_index_;
+    std::vector<std::vector<float>> comb_damp_state_;
+
+    std::vector<float> crossfeed_state_;
 };
 
 } // namespace mydoom
