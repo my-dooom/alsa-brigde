@@ -1,4 +1,5 @@
 #include <alsa/asoundlib.h> // alsa api for pcm audio capture/playback
+#include <algorithm>        // std::max, std::min
 #include <atomic>
 #include <cstdlib>          // getenv, strtoul
 #include <iostream>         // std::cout / std::cerr
@@ -262,34 +263,42 @@ int main()
                     * MCP_SMOOTH_ALPHA;
                 const long smoothed_channel_1_raw = static_cast<long>(filtered_channel_1_raw + 0.5f);
 
-                // convert the 10 bit value into normal reverb ranges
-                const long mapped_mix_pct = map_value(smoothed_channel_1_raw, 0, 1023, 0, 100);  // 0..100% wet
-                const long mapped_decay_milli = map_value(smoothed_channel_1_raw, 0, 1023, 670, 670); // TODO: finetune decay; 0.1..0.2s
-                const long mapped_delay_ms = map_value(smoothed_channel_1_raw, 0, 1023, 10, 200); // TODO: finetune ; 180..300ms predelay
+                // mix stays on the knob; decay and predelay snap to BPM when available
+                const long mapped_mix_pct = map_value(smoothed_channel_1_raw, 0, 1023, 0, 100); // 0..100% wet
+                const float reverb_mix = static_cast<float>(mapped_mix_pct) / 100.0f;
 
-                const float reverb_mix = static_cast<float>(mapped_mix_pct) / 100.0f; // 10..70% wet
-                const float reverb_decay = static_cast<float>(mapped_decay_milli) / 1000.0f; // 0.1..0.2s
-                const size_t delay_len = static_cast<size_t>((static_cast<float>(mapped_delay_ms) * SAMPLE_RATE / 1000.0f) + 0.5f);
-                // delay_len is samples at SAMPLE_RATE
+#ifdef ENABLE_LINK_SYNC
+                const float _link_bpm = link_sync_get_bpm();
+                const bool  _bpm_valid = _link_bpm > 0.0f;
+#else
+                constexpr float _link_bpm = 0.0f;
+                constexpr bool  _bpm_valid = false;
+#endif
+                // decay = 2 beats; predelay = 1/8th note (BPM-locked when available)
+                const float reverb_decay = _bpm_valid
+                    ? std::max(0.1f, std::min(4.0f, 2.0f * 60.0f / _link_bpm))
+                    : static_cast<float>(map_value(smoothed_channel_1_raw, 0, 1023, 300, 2000)) / 1000.0f;
+                const float _delay_ms = _bpm_valid
+                    ? std::max(10.0f, std::min(500.0f, 60000.0f / _link_bpm / 8.0f))
+                    : static_cast<float>(map_value(smoothed_channel_1_raw, 0, 1023, 10, 200));
+                const size_t delay_len = static_cast<size_t>(_delay_ms * SAMPLE_RATE / 1000.0f + 0.5f);
 
-                // for future 
-                (void)channel_2_raw;
+                // channel_2 → trance gate depth (0 = bypass, max knob = full gate)
+                const float gate_depth = static_cast<float>(channel_2_raw) / 1023.0f;
+#ifdef ENABLE_LINK_SYNC
+                set_trance_gate_params(link_sync_get_bpm(), gate_depth);
+#else
+                set_trance_gate_params(0.0f, gate_depth);
+#endif
 
                 set_effect_target_params(EffectParams{reverb_decay, reverb_mix, delay_len});
             }
 
 #ifdef ENABLE_LINK_SYNC
             {
-                const float link_bpm = link_sync_get_bpm();
-                if (link_bpm > 0.0f) {
-                    // beat_samples = samples per beat at current Link tempo
-                    // e.g. at 128 BPM: 48000*60/128 = 22500 samples
-                    const float beat_samples =
-                        (static_cast<float>(SAMPLE_RATE) * 60.0f) / link_bpm;
-                    (void)beat_samples; // wire to effect param when delay is added
-                    AV_DEBUG_LOG(std::cout << "Link BPM: " << link_bpm
-                                          << "  beat_samples: " << beat_samples << "\n";);
-                }
+                AV_DEBUG_LOG(
+                    const float link_bpm = link_sync_get_bpm();
+                    std::cout << "Link BPM: " << link_bpm << "\n";);
             }
 #endif
 

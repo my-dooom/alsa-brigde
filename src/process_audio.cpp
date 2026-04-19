@@ -3,6 +3,7 @@
 #include "highpass.hh"
 #include "process_block_mmap.hpp"
 #include "stream_format.hpp"
+#include "trance_gate.hpp"
 #include "vibeverb.hh"
 
 #include <algorithm>
@@ -18,6 +19,9 @@ std::atomic<float> g_smoothed_decay_snapshot{0.65f};
 std::atomic<float> g_smoothed_mix_snapshot{0.35f};
 std::atomic<uint32_t> g_smoothed_delay_len_snapshot{1728};
 
+std::atomic<float> g_gate_bpm{0.0f};
+std::atomic<float> g_gate_depth{0.0f};
+
 float clampf(float value, float lo, float hi) {
     return std::max(lo, std::min(value, hi));
 }
@@ -29,6 +33,11 @@ void set_effect_target_params(const EffectParams& params) {
     g_target_mix.store(clampf(params.reverb_mix, 0.0f, 1.0f), std::memory_order_relaxed);
     const size_t clamped_delay_len = std::max<size_t>(1, std::min<size_t>(params.reverb_delay_len, 48000));
     g_target_delay_len.store(static_cast<uint32_t>(clamped_delay_len), std::memory_order_relaxed);
+}
+
+void set_trance_gate_params(float bpm, float depth) {
+    g_gate_bpm.store(bpm > 0.0f ? bpm : 0.0f, std::memory_order_relaxed);
+    g_gate_depth.store(clampf(depth, 0.0f, 1.0f), std::memory_order_relaxed);
 }
 
 EffectParams get_effect_target_params() {
@@ -65,6 +74,7 @@ void process_samples_inplace(int32_t* buffer_ptr, snd_pcm_uframes_t frames, unsi
     static uint32_t smoothed_delay_len = 1728;
     static mydoom::Vibeverb vibeverb(0.65f, 1728, 2);
     static mydoom::HighPassFilter hpf(48000.0f, 2);
+    static mydoom::TranceGate gate(48000);
 
     const float target_decay = g_target_decay.load(std::memory_order_relaxed);
     const float target_mix = g_target_mix.load(std::memory_order_relaxed);
@@ -81,6 +91,10 @@ void process_samples_inplace(int32_t* buffer_ptr, snd_pcm_uframes_t frames, unsi
     hpf.set_mix(smoothed_mix);
     hpf.process_interleaved(buffer_ptr, static_cast<size_t>(frames), static_cast<size_t>(channels));
     vibeverb.process_interleaved(buffer_ptr, static_cast<size_t>(frames), static_cast<size_t>(channels));
+
+    gate.set_bpm(g_gate_bpm.load(std::memory_order_relaxed));
+    gate.set_depth(g_gate_depth.load(std::memory_order_relaxed));
+    gate.process_interleaved(buffer_ptr, static_cast<size_t>(frames), static_cast<size_t>(channels));
 
     g_smoothed_decay_snapshot.store(smoothed_decay, std::memory_order_relaxed);
     g_smoothed_mix_snapshot.store(smoothed_mix, std::memory_order_relaxed);
