@@ -33,6 +33,7 @@ add_executable(audio_bridge
     src/process_audio.cpp
     src/process_block_mmap.cpp
     src/loudness_meter.cpp
+    src/effects/reverb.cpp
     src/stream_format.cpp
 )
 
@@ -40,6 +41,7 @@ target_include_directories(audio_bridge PRIVATE
     ${ALSA_INCLUDE_DIRS}
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/src/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/effects
 )
 
 target_compile_options(audio_bridge PRIVATE
@@ -83,6 +85,7 @@ add_executable(test_process_block
     src/process_block_mmap.cpp
     src/loudness_meter.cpp
     src/stream_format.cpp
+    src/effects/reverb.cpp
 )
 
 add_executable(test_e2e
@@ -91,18 +94,21 @@ add_executable(test_e2e
     src/process_block_mmap.cpp
     src/loudness_meter.cpp
     src/stream_format.cpp
+    src/effects/reverb.cpp
 )
 
 target_include_directories(test_process_block PRIVATE
     ${ALSA_INCLUDE_DIRS}
     ${CMAKE_CURRENT_SOURCE_DIR}/src/include
     ${CMAKE_CURRENT_SOURCE_DIR}/DeciBeliever/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/effects
 )
 
 target_include_directories(test_e2e PRIVATE
     ${ALSA_INCLUDE_DIRS}
     ${CMAKE_CURRENT_SOURCE_DIR}/src/include
     ${CMAKE_CURRENT_SOURCE_DIR}/DeciBeliever/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/effects
 )
 
 target_compile_options(test_process_block PRIVATE

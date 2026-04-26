@@ -84,7 +84,7 @@ int main()
 
     AV_DEBUG_LOG(std::cout << "Selected DMA format: " << snd_pcm_format_name(stream_format) << "\n";);
     set_stream_format(stream_format);
-    set_effect_target_params(EffectParams{1.0f, 1.0f});
+    set_effect_target_params(EffectParams{1.0f, 1.0f, 2.0f, 0.95f});
 
 #ifdef ENABLE_LINK_SYNC
     link_sync_start();
@@ -213,9 +213,21 @@ int main()
             const int channel_1_raw = g_spi_raw[SPI_CHANNEL_1].load(std::memory_order_relaxed);
             const int channel_2_raw = g_spi_raw[SPI_CHANNEL_2].load(std::memory_order_relaxed);
 
-            // Keep SPI inputs decoupled from runtime effect parameters.
-            (void)channel_1_raw;
-            (void)channel_2_raw;
+            // Wet hardcoded to 1.0 — reverb used as send effect.
+            // MCP ch0 → reverb decay time [0.1, 10] s
+            // MCP ch1 → output gain [0, 2]
+            constexpr float kMcpMax = 1023.0f;
+            const float decay = (channel_1_raw >= 0)
+                ? 0.1f + (static_cast<float>(channel_1_raw) / kMcpMax) * 9.9f
+                : 2.0f;
+            const float gain  = (channel_2_raw >= 0)
+                ? (static_cast<float>(channel_2_raw) / kMcpMax) * 2.0f
+                : 1.0f;
+            const int channel_3_raw = g_spi_raw[2].load(std::memory_order_relaxed);
+            const float damping = (channel_3_raw >= 0)
+                ? (static_cast<float>(channel_3_raw) / kMcpMax) * 0.9999f
+                : 0.95f;
+            set_effect_target_params(EffectParams{gain, 1.0f, decay, damping});
 
 #ifdef ENABLE_LINK_SYNC
             {

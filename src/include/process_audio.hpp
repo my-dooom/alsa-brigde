@@ -4,8 +4,10 @@
 #include <cstdint>
 
 struct EffectParams {
-	float output_gain;
-	float wet_mix;
+	float output_gain;    // linear gain applied after reverb [0, 2]
+	float wet_mix;        // reverb wet/dry [0, 1]
+	float reverb_decay;   // reverb tail to -60 dB, seconds [0.1, 10]
+	float reverb_damping; // feedback LP coeff: 0 = bright, 1 = dark [0, 1)
 };
 
 void set_effect_target_params(const EffectParams& params);
