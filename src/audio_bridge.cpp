@@ -30,12 +30,13 @@
 
 #define SAMPLE_RATE 48000 // audio sample rate in hz
 #define CHANNELS 2        // stereo
-#define PERIOD_FRAMES 512 // target period size in frames
+#define PERIOD_FRAMES 256 // target period size in frames
 #define BUFFER_PERIODS 4  // total ring buffer = PERIOD_FRAMES * BUFFER_PERIODS
 
 #define SPI_DEVICE "/dev/spidev0.0"
 #define SPI_CHANNEL_1 0
 #define SPI_CHANNEL_2 1
+#define SPI_CHANNEL_3 2
 #define PARAM_UPDATE_EVERY_LOOPS 4
 #define MCP_RAW_DEADBAND 4
 #define MCP_SMOOTH_ALPHA 0.12f
@@ -86,7 +87,7 @@ int main()
 
     AV_DEBUG_LOG(std::cout << "Selected DMA format: " << snd_pcm_format_name(stream_format) << "\n";);
     set_stream_format(stream_format);
-    set_effect_target_params(EffectParams{0.62f, 0.24f, 14400});
+    set_effect_target_params(EffectParams{0.62f, 1.0f, 1});
 
 #ifdef ENABLE_LINK_SYNC
     link_sync_start();
@@ -236,6 +237,12 @@ int main()
     bool channel_1_initialized = false;
     int stable_channel_1_raw = 0;
     float filtered_channel_1_raw = 0.0f;
+    bool channel_2_initialized = false;
+    int stable_channel_2_raw = 0;
+    float filtered_channel_2_raw = 0.0f;
+    bool channel_3_initialized = false;
+    int stable_channel_3_raw = 0;
+    float filtered_channel_3_raw = 0.0f;
 
     while (true) // main processing loop
     {
@@ -243,39 +250,56 @@ int main()
         {
             const int channel_1_raw = g_spi_raw[SPI_CHANNEL_1].load(std::memory_order_relaxed);
             const int channel_2_raw = g_spi_raw[SPI_CHANNEL_2].load(std::memory_order_relaxed);
+            const int channel_3_raw = g_spi_raw[SPI_CHANNEL_3].load(std::memory_order_relaxed);
 
-            if (channel_1_raw >= 0 && channel_2_raw >= 0)
+            if (channel_1_raw >= 0 && channel_2_raw >= 0 && channel_3_raw >= 0)
             {
+                // channel 1 → mix
                 if (!channel_1_initialized) {
                     stable_channel_1_raw = channel_1_raw;
                     filtered_channel_1_raw = static_cast<float>(channel_1_raw);
                     channel_1_initialized = true;
                 }
-
-                // ignore tiny adc jitter unless it moves more than the deadband
-                if (std::abs(channel_1_raw - stable_channel_1_raw) >= MCP_RAW_DEADBAND) {
+                if (std::abs(channel_1_raw - stable_channel_1_raw) >= MCP_RAW_DEADBAND)
                     stable_channel_1_raw = channel_1_raw;
-                }
-
-                // smooth the stable adc value so the effect params drift slowly
                 filtered_channel_1_raw += (static_cast<float>(stable_channel_1_raw) - filtered_channel_1_raw)
                     * MCP_SMOOTH_ALPHA;
-                const long smoothed_channel_1_raw = static_cast<long>(filtered_channel_1_raw + 0.5f);
+                const long smoothed_ch1 = static_cast<long>(filtered_channel_1_raw + 0.5f);
 
-                // convert the 10 bit value into normal reverb ranges
-                const long mapped_mix_pct = map_value(smoothed_channel_1_raw, 0, 1023, 0, 100);  // 0..100% wet
-                const long mapped_decay_milli = map_value(smoothed_channel_1_raw, 0, 1023, 670, 670); // TODO: finetune decay; 0.1..0.2s
-                const long mapped_delay_ms = map_value(smoothed_channel_1_raw, 0, 1023, 10, 200); // TODO: finetune ; 180..300ms predelay
+                // channel 2 → decay
+                if (!channel_2_initialized) {
+                    stable_channel_2_raw = channel_2_raw;
+                    filtered_channel_2_raw = static_cast<float>(channel_2_raw);
+                    channel_2_initialized = true;
+                }
+                if (std::abs(channel_2_raw - stable_channel_2_raw) >= MCP_RAW_DEADBAND)
+                    stable_channel_2_raw = channel_2_raw;
+                filtered_channel_2_raw += (static_cast<float>(stable_channel_2_raw) - filtered_channel_2_raw)
+                    * MCP_SMOOTH_ALPHA;
+                const long smoothed_ch2 = static_cast<long>(filtered_channel_2_raw + 0.5f);
 
-                const float reverb_mix = static_cast<float>(mapped_mix_pct) / 100.0f; // 10..70% wet
-                const float reverb_decay = static_cast<float>(mapped_decay_milli) / 1000.0f; // 0.1..0.2s
-                const size_t delay_len = static_cast<size_t>((static_cast<float>(mapped_delay_ms) * SAMPLE_RATE / 1000.0f) + 0.5f);
-                // delay_len is samples at SAMPLE_RATE
+                // channel 3 → predelay
+                if (!channel_3_initialized) {
+                    stable_channel_3_raw = channel_3_raw;
+                    filtered_channel_3_raw = static_cast<float>(channel_3_raw);
+                    channel_3_initialized = true;
+                }
+                if (std::abs(channel_3_raw - stable_channel_3_raw) >= MCP_RAW_DEADBAND)
+                    stable_channel_3_raw = channel_3_raw;
+                filtered_channel_3_raw += (static_cast<float>(stable_channel_3_raw) - filtered_channel_3_raw)
+                    * MCP_SMOOTH_ALPHA;
+                const long smoothed_ch3 = static_cast<long>(filtered_channel_3_raw + 0.5f);
 
-                // for future 
-                (void)channel_2_raw;
+                // convert the 10 bit values into reverb ranges
+                const long mapped_diffusion_pct   = map_value(smoothed_ch1, 0, 1023, 0, 99);  // ch1: 0..0.99 diffusion A
+                const long mapped_decay_milli     = map_value(smoothed_ch2, 0, 1023, 300, 970); // ch2: 0.30..0.97 feedback (short room → cathedral)
+                const long mapped_diffusion_b_pct = map_value(smoothed_ch3, 0, 1023, 0, 99);  // ch3: 0..0.99 diffusion B
 
-                set_effect_target_params(EffectParams{reverb_decay, reverb_mix, delay_len});
+                const float reverb_diffusion   = static_cast<float>(mapped_diffusion_pct) / 100.0f;
+                const float reverb_decay       = static_cast<float>(mapped_decay_milli) / 1000.0f;
+                const float reverb_diffusion_b = static_cast<float>(mapped_diffusion_b_pct) / 100.0f;
+
+                set_effect_target_params(EffectParams{reverb_decay, 1.0f, 1, reverb_diffusion, reverb_diffusion_b});
             }
 
 #ifdef ENABLE_LINK_SYNC

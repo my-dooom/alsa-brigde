@@ -8,6 +8,8 @@ struct EffectParams {
 	float reverb_decay;
 	float reverb_mix;
 	size_t reverb_delay_len;
+	float reverb_diffusion = 0.72f;
+	float reverb_diffusion_b = 0.64f;
 };
 
 void set_effect_target_params(const EffectParams& params);

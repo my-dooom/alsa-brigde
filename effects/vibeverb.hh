@@ -13,6 +13,8 @@ public:
     void set_decay(float decay);
     void set_delay_length(size_t delay_len);
     void set_mix(float wet_mix);
+    void set_diffusion(float diffusion);
+    void set_diffusion_b(float diffusion);
     void reset();
 
     void process_interleaved(int32_t* buffer, size_t frames, size_t channels);
@@ -23,6 +25,8 @@ private:
 
     float decay_;
     float mix_;
+    float diffusion_a_;
+    float diffusion_b_;
     size_t base_delay_len_;
     size_t channels_;
 

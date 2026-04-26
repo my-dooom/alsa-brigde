@@ -13,8 +13,6 @@ float clampf(float v, float lo, float hi) {
 constexpr size_t kCombCount = 16;
 
 // two diffusion passes to spread the input before the combs
-constexpr float kInputDiffusionA = 0.72f;
-constexpr float kInputDiffusionB = 0.64f;
 
 // damping inside the tank so the combs dont stay too bright
 constexpr float kTankDamping = 0.40f;
@@ -30,6 +28,8 @@ namespace mydoom {
 Vibeverb::Vibeverb(float decay, size_t delay_len, size_t channels)
     : decay_(clampf(decay, 0.0f, 0.98f)),
       mix_(0.35f),
+      diffusion_a_(0.72f),
+      diffusion_b_(0.64f),
       base_delay_len_(delay_len > 0 ? delay_len : 1),
       channels_(channels > 0 ? channels : 1) {
     rebuild_state();
@@ -109,6 +109,14 @@ void Vibeverb::set_mix(float wet_mix) {
     mix_ = clampf(wet_mix, 0.0f, 1.0f);
 }
 
+void Vibeverb::set_diffusion(float diffusion) {
+    diffusion_a_ = clampf(diffusion, 0.0f, 0.99f);
+}
+
+void Vibeverb::set_diffusion_b(float diffusion) {
+    diffusion_b_ = clampf(diffusion, 0.0f, 0.99f);
+}
+
 void Vibeverb::reset() {
     for (auto& line : predelay_lines_) {
         std::fill(line.begin(), line.end(), 0.0f);
@@ -186,8 +194,8 @@ void Vibeverb::process_interleaved(int32_t* buffer, size_t frames, size_t channe
                 x = delayed;
             }
 
-            x = process_allpass(diffuser_a_lines_[ch], diffuser_a_index_[ch], x, kInputDiffusionA);
-            x = process_allpass(diffuser_b_lines_[ch], diffuser_b_index_[ch], x, kInputDiffusionB);
+            x = process_allpass(diffuser_a_lines_[ch], diffuser_a_index_[ch], x, diffusion_a_);
+            x = process_allpass(diffuser_b_lines_[ch], diffuser_b_index_[ch], x, diffusion_b_);
 
             float comb_sum = 0.0f;
             for (size_t i = 0; i < kCombCount; ++i) {
