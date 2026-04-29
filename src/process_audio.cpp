@@ -13,7 +13,8 @@ namespace {
 std::atomic<float> g_target_gain{1.0f};
 std::atomic<float> g_target_wet_mix{1.0f};
 std::atomic<float> g_target_reverb_decay{2.0f};
-std::atomic<float> g_target_reverb_damping{0.95f};
+std::atomic<float> g_target_reverb_damping{0.9f};
+std::atomic<float> g_target_reverb_bandwidth{0.1f};
 std::atomic<float> g_smoothed_gain_snapshot{1.0f};
 std::atomic<float> g_smoothed_wet_snapshot{1.0f};
 
@@ -34,6 +35,7 @@ void set_effect_target_params(const EffectParams& params) {
     g_target_wet_mix.store(clampf(params.wet_mix, 0.0f, 1.0f), std::memory_order_relaxed);
     g_target_reverb_decay.store(std::max(0.1f, params.reverb_decay), std::memory_order_relaxed);
     g_target_reverb_damping.store(std::clamp(params.reverb_damping, 0.0f, 0.9999f), std::memory_order_relaxed);
+    g_target_reverb_bandwidth.store(std::clamp(params.reverb_bandwidth, 0.0f, 1.0f), std::memory_order_relaxed);
 }
 
 EffectParams get_effect_target_params() {
@@ -41,7 +43,8 @@ EffectParams get_effect_target_params() {
         g_target_gain.load(std::memory_order_relaxed),
         g_target_wet_mix.load(std::memory_order_relaxed),
         g_target_reverb_decay.load(std::memory_order_relaxed),
-        g_target_reverb_damping.load(std::memory_order_relaxed)
+        g_target_reverb_damping.load(std::memory_order_relaxed),
+        g_target_reverb_bandwidth.load(std::memory_order_relaxed)
     };
 }
 
@@ -50,7 +53,8 @@ EffectParams get_effect_smoothed_params() {
         g_smoothed_gain_snapshot.load(std::memory_order_relaxed),
         g_smoothed_wet_snapshot.load(std::memory_order_relaxed),
         g_target_reverb_decay.load(std::memory_order_relaxed),
-        g_target_reverb_damping.load(std::memory_order_relaxed)
+        g_target_reverb_damping.load(std::memory_order_relaxed),
+        g_target_reverb_bandwidth.load(std::memory_order_relaxed)
     };
 }
 
@@ -80,6 +84,7 @@ void process_samples_inplace(int32_t* buffer_ptr, snd_pcm_uframes_t frames, unsi
     const float target_wet   = g_target_wet_mix.load(std::memory_order_relaxed);
     const float target_decay   = g_target_reverb_decay.load(std::memory_order_relaxed);
     const float target_damping = g_target_reverb_damping.load(std::memory_order_relaxed);
+    const float target_bandwidth = g_target_reverb_bandwidth.load(std::memory_order_relaxed);
 
     // Smooth gain and wet over the block (per-block, not per-sample).
     smoothed_gain += (target_gain - smoothed_gain) * kSmoothingFactor * static_cast<float>(frames);
@@ -94,6 +99,7 @@ void process_samples_inplace(int32_t* buffer_ptr, snd_pcm_uframes_t frames, unsi
     g_reverb.set_decay_time(target_decay);
     g_reverb.set_wet_mix(smoothed_wet);
     g_reverb.set_damping(target_damping);
+    g_reverb.set_bandwidth(target_bandwidth);
     g_reverb.process_samples_inplace(float_buf, frames, channels);
 
     // Apply output gain and convert float → int32.

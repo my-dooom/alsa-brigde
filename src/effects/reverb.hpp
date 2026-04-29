@@ -3,9 +3,8 @@
 #include <cstddef>
 #include <memory>
 
-// Diffusion reverb — Geraint Luff ADC21 design, no external dependencies.
+// MVerb reverb — Martin Eastwood (GPLv3).
 // Operates on normalized float samples [-1.0, 1.0].
-// Architecture: 4x diffuser stages (8ch Householder) → feedback loop (8ch Householder).
 class Reverb {
 public:
     // sample_rate : Hz
@@ -16,7 +15,8 @@ public:
 
     void set_decay_time(float seconds);
     void set_wet_mix(float mix);      // clamped to [0, 1]
-    void set_damping(float damping);  // 0 = bright (no LP), 1 = very dark; clamped to [0, 1)
+    void set_damping(float damping);  // 0 = bright (no LP), 1 = very dark [0, 1)
+    void set_bandwidth(float bandwidth);  // input bandwidth filter center freq [0, 1]
 
     // Process interleaved normalized float samples in place.
     // channels: number of interleaved channels per frame (e.g. 2 for stereo).

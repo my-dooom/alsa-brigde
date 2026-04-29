@@ -47,13 +47,13 @@ void LoudnessMeter::render_if_due(int loop_count, const int32_t* interleaved_ste
     // Redraw in-place: 2 meter lines + optional Link line.
     // Cursor rests at the end of the last printed line (no trailing \n).
     // \r moves to column 0 of that line; each \033[1A moves up one line.
-    // 2-line layout: cursor on L  → \r\033[1A        lands on R.
-    // 3-line layout: cursor on Link → \r\033[1A\033[1A lands on R.
+    // 2-line layout: after L's \n cursor is on line N+2; \033[2A moves up 2 to R.
+    // 3-line layout: Link has no trailing \n so cursor stays on line N+2; \033[1A\033[1A lands on R.
     if (initialized_) {
 #ifdef ENABLE_LINK_SYNC
         std::cout << "\r\033[1A\033[1A";
 #else
-        std::cout << "\r\033[1A";
+        std::cout << "\r\033[2A";
 #endif
     } else {
         initialized_ = true;
